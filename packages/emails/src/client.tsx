@@ -2,12 +2,11 @@
 
 import { render } from "@react-email/render";
 import { Effect, Schedule } from "effect";
-import { Resend } from "resend";
-import FollowUpEmail from "../emails/followup";
+import { ServerClient } from "postmark";
+import { env } from "./env";
 import type { MonitorAlertProps } from "../emails/monitor-alert";
 import PageSubscriptionEmail from "../emails/page-subscription";
 import type { PageSubscriptionProps } from "../emails/page-subscription";
-import SlackFeedbackEmail from "../emails/slack-feedback";
 import StatusPageMagicLinkEmail from "../emails/status-page-magic-link";
 import type { StatusPageMagicLinkProps } from "../emails/status-page-magic-link";
 import StatusReportEmail from "../emails/status-report";
@@ -26,124 +25,26 @@ function chunk<T>(array: T[], size: number): T[][] {
 }
 
 export class EmailClient {
-  public readonly client: Resend;
+  public readonly client: ServerClient;
 
   constructor(opts: { apiKey: string }) {
-    this.client = new Resend(opts.apiKey);
+    this.client = new ServerClient(opts.apiKey);
   }
 
-  public async sendFollowUp(req: { to: string }) {
-    if (process.env.NODE_ENV === "development") {
-      console.log(`Sending follow up email to ${req.to}`);
-      return;
-    }
-
-    try {
-      const html = await render(<FollowUpEmail />);
-      const result = await this.client.emails.send({
-        from: "Thibault Le Ouay Ducasse <welcome@openstatus.dev>",
-        replyTo: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        subject: "How's it going with OpenStatus?",
-        to: req.to,
-        html,
-      });
-
-      if (!result.error) {
-        console.log(`Sent follow up email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
-    } catch (err) {
-      console.error(`Error sending follow up email to ${req.to}: ${err}`);
-    }
+  public async sendFollowUp(_req: { to: string }) {
+    return;
   }
 
-  public async sendFollowUpBatched(req: { to: string[] }) {
-    if (process.env.NODE_ENV === "development") {
-      console.log(`Sending follow up emails to ${req.to.join(", ")}`);
-      return;
-    }
-
-    const html = await render(<FollowUpEmail />);
-    const result = await this.client.batch.send(
-      req.to.map((subscriber) => ({
-        from: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        subject: "How's it going with OpenStatus?",
-        to: subscriber,
-        html,
-      })),
-    );
-
-    if (result.error) {
-      //  We only throw the error if we are rate limited
-      if (result.error?.name === "rate_limit_exceeded") {
-        throw result.error;
-      }
-      //  Otherwise let's log the error and continue
-      console.error(
-        `Error sending follow up email to ${req.to}: ${result.error}`,
-      );
-      return;
-    }
-
-    console.log(`Sent follow up emails to ${req.to}`);
+  public async sendFollowUpBatched(_req: { to: string[] }) {
+    return;
   }
 
-  public async sendSlackFeedback(req: { to: string }) {
-    if (process.env.NODE_ENV === "development") {
-      console.log(`Sending slack feedback email to ${req.to}`);
-      return;
-    }
-
-    try {
-      const html = await render(<SlackFeedbackEmail />);
-      const result = await this.client.emails.send({
-        from: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        replyTo: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        subject: "How's the Slack app working for you?",
-        to: req.to,
-        html,
-      });
-
-      if (!result.error) {
-        console.log(`Sent slack feedback email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
-    } catch (err) {
-      console.error(`Error sending slack feedback email to ${req.to}: ${err}`);
-    }
+  public async sendSlackFeedback(_req: { to: string }) {
+    return;
   }
 
-  public async sendSlackFeedbackBatched(req: { to: string[] }) {
-    if (process.env.NODE_ENV === "development") {
-      console.log(`Sending slack feedback emails to ${req.to.join(", ")}`);
-      return;
-    }
-
-    const html = await render(<SlackFeedbackEmail />);
-    const result = await this.client.batch.send(
-      req.to.map((subscriber) => ({
-        from: "Thibault Le Ouay Ducasse <thibault@openstatus.dev>",
-        subject: "How's the Slack app working for you?",
-        to: subscriber,
-        html,
-      })),
-    );
-
-    if (result.error) {
-      if (result.error?.name === "rate_limit_exceeded") {
-        throw result.error;
-      }
-      console.error(
-        `Error sending slack feedback email to ${req.to}: ${result.error}`,
-      );
-      return;
-    }
-
-    console.log(`Sent slack feedback emails to ${req.to}`);
+  public async sendSlackFeedbackBatched(_req: { to: string[] }) {
+    return;
   }
 
   public async sendStatusReportUpdate(
@@ -167,26 +68,28 @@ export class EmailClient {
     }
 
     for (const recipients of chunk(req.subscribers, 100)) {
+      const messages = await Promise.all(
+        recipients.map(async (subscriber) => {
+          const unsubscribeUrl = `${statusPageBaseUrl}/unsubscribe/${subscriber.token}`;
+          const manageUrl = `${statusPageBaseUrl}/manage/${subscriber.token}`;
+          const html = await render(
+            <StatusReportEmail
+              {...req}
+              unsubscribeUrl={unsubscribeUrl}
+              manageUrl={manageUrl}
+            />,
+          );
+          return {
+            From: `${req.pageTitle} <${env.EMAIL_FROM}>`,
+            Subject: req.reportTitle,
+            To: subscriber.email,
+            HtmlBody: html,
+          };
+        }),
+      );
+
       const sendEmail = Effect.tryPromise({
-        try: () =>
-          this.client.batch.send(
-            recipients.map((subscriber) => {
-              const unsubscribeUrl = `${statusPageBaseUrl}/unsubscribe/${subscriber.token}`;
-              const manageUrl = `${statusPageBaseUrl}/manage/${subscriber.token}`;
-              return {
-                from: `${req.pageTitle} <notifications@notifications.openstatus.dev>`,
-                subject: req.reportTitle,
-                to: subscriber.email,
-                react: (
-                  <StatusReportEmail
-                    {...req}
-                    unsubscribeUrl={unsubscribeUrl}
-                    manageUrl={manageUrl}
-                  />
-                ),
-              };
-            }),
-          ),
+        try: () => this.client.sendEmailBatch(messages),
         catch: (_unknown) =>
           new Error(
             `Error sending status report update batch to ${recipients.map(
@@ -194,9 +97,6 @@ export class EmailClient {
             )}`,
           ),
       }).pipe(
-        Effect.andThen((result) =>
-          result.error ? Effect.fail(result.error) : Effect.succeed(result),
-        ),
         Effect.retry({
           times: 3,
           schedule: Schedule.exponential("1000 millis"),
@@ -218,23 +118,17 @@ export class EmailClient {
 
     try {
       const html = await render(<TeamInvitationEmail {...req} />);
-      const result = await this.client.emails.send({
-        from: `${
+      await this.client.sendEmail({
+        From: `${
           req.workspaceName ?? "OpenStatus"
-        } <notifications@notifications.openstatus.dev>`,
-        subject: `You've been invited to join ${
+        } <${env.EMAIL_FROM}>`,
+        Subject: `You've been invited to join ${
           req.workspaceName ?? "OpenStatus"
         }`,
-        to: req.to,
-        html,
+        To: req.to,
+        HtmlBody: html,
       });
-
-      if (!result.error) {
-        console.log(`Sent team invitation email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
+      console.log(`Sent team invitation email to ${req.to}`);
     } catch (err) {
       console.error(`Error sending team invitation email to ${req.to}`, err);
     }
@@ -247,21 +141,14 @@ export class EmailClient {
     }
 
     try {
-      // const html = await render(<MonitorAlertEmail {...req} />);
       const html = monitorAlertEmail(req);
-      const result = await this.client.emails.send({
-        from: "OpenStatus <notifications@notifications.openstatus.dev>",
-        subject: `${req.name}: ${req.type.toUpperCase()}`,
-        to: req.to,
-        html,
+      await this.client.sendEmail({
+        From: `OpenStatus <${env.EMAIL_FROM}>`,
+        Subject: `${req.name}: ${req.type.toUpperCase()}`,
+        To: req.to,
+        HtmlBody: html,
       });
-
-      if (!result.error) {
-        console.log(`Sent monitor alert email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
+      console.log(`Sent monitor alert email to ${req.to}`);
     } catch (err) {
       console.error(`Error sending monitor alert to ${req.to}`, err);
       throw err;
@@ -278,19 +165,13 @@ export class EmailClient {
 
     try {
       const html = await render(<PageSubscriptionEmail {...req} />);
-      const result = await this.client.emails.send({
-        from: "Status Page <notifications@notifications.openstatus.dev>",
-        subject: `Confirm your subscription to ${req.page}`,
-        to: req.to,
-        html,
+      await this.client.sendEmail({
+        From: `Status Page <${env.EMAIL_FROM}>`,
+        Subject: `Confirm your subscription to ${req.page}`,
+        To: req.to,
+        HtmlBody: html,
       });
-
-      if (!result.error) {
-        console.log(`Sent page subscription email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
+      console.log(`Sent page subscription email to ${req.to}`);
     } catch (err) {
       console.error(`Error sending page subscription to ${req.to}`, err);
     }
@@ -307,19 +188,13 @@ export class EmailClient {
 
     try {
       const html = await render(<StatusPageMagicLinkEmail {...req} />);
-      const result = await this.client.emails.send({
-        from: "Status Page <notifications@notifications.openstatus.dev>",
-        subject: `Authenticate to ${req.page}`,
-        to: req.to,
-        html,
+      await this.client.sendEmail({
+        From: `Status Page <${env.EMAIL_FROM}>`,
+        Subject: `Authenticate to ${req.page}`,
+        To: req.to,
+        HtmlBody: html,
       });
-
-      if (!result.error) {
-        console.log(`Sent status page magic link email to ${req.to}`);
-        return;
-      }
-
-      throw result.error;
+      console.log(`Sent status page magic link email to ${req.to}`);
     } catch (err) {
       console.error(`Error sending status page magic link to ${req.to}`, err);
     }
@@ -350,31 +225,33 @@ export class EmailClient {
     }
 
     for (const recipients of chunk(req.subscribers, 100)) {
+      const messages = await Promise.all(
+        recipients.map(async (subscriber) => {
+          const unsubscribeUrl = `${statusPageBaseUrl}/unsubscribe/${subscriber.token}`;
+          const manageUrl = `${statusPageBaseUrl}/manage/${subscriber.token}`;
+          const html = await render(
+            <StatusReportEmail
+              pageTitle={req.pageTitle}
+              reportTitle={req.maintenanceTitle}
+              status="maintenance"
+              date={`${req.from} - ${req.to}`}
+              message={req.message}
+              pageComponents={req.pageComponents}
+              unsubscribeUrl={unsubscribeUrl}
+              manageUrl={manageUrl}
+            />,
+          );
+          return {
+            From: `${req.pageTitle} <${env.EMAIL_FROM}>`,
+            Subject: `Scheduled Maintenance: ${req.maintenanceTitle}`,
+            To: subscriber.email,
+            HtmlBody: html,
+          };
+        }),
+      );
+
       const sendEmail = Effect.tryPromise({
-        try: () =>
-          this.client.batch.send(
-            recipients.map((subscriber) => {
-              const unsubscribeUrl = `${statusPageBaseUrl}/unsubscribe/${subscriber.token}`;
-              const manageUrl = `${statusPageBaseUrl}/manage/${subscriber.token}`;
-              return {
-                from: `${req.pageTitle} <notifications@notifications.openstatus.dev>`,
-                subject: `Scheduled Maintenance: ${req.maintenanceTitle}`,
-                to: subscriber.email,
-                react: (
-                  <StatusReportEmail
-                    pageTitle={req.pageTitle}
-                    reportTitle={req.maintenanceTitle}
-                    status="maintenance"
-                    date={`${req.from} - ${req.to}`}
-                    message={req.message}
-                    pageComponents={req.pageComponents}
-                    unsubscribeUrl={unsubscribeUrl}
-                    manageUrl={manageUrl}
-                  />
-                ),
-              };
-            }),
-          ),
+        try: () => this.client.sendEmailBatch(messages),
         catch: (_unknown) =>
           new Error(
             `Error sending maintenance notification batch to ${recipients.map(
@@ -382,9 +259,6 @@ export class EmailClient {
             )}`,
           ),
       }).pipe(
-        Effect.andThen((result) =>
-          result.error ? Effect.fail(result.error) : Effect.succeed(result),
-        ),
         Effect.retry({
           times: 3,
           schedule: Schedule.exponential("1000 millis"),

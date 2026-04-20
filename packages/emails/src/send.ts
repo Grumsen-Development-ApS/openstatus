@@ -1,10 +1,9 @@
-import type React from "react";
-import { Resend } from "resend";
-
 import { render } from "@react-email/render";
+import { type Message, ServerClient } from "postmark";
+import type React from "react";
 import { env } from "./env";
 
-export const resend = new Resend(env.RESEND_API_KEY);
+export const postmark = new ServerClient(env.RESEND_API_KEY);
 
 export interface Emails {
   react: React.JSX.Element;
@@ -21,35 +20,46 @@ export type EmailHtml = {
   from: string;
   reply_to?: string;
 };
+
+const toPostmarkMessage = (email: EmailHtml): Message => ({
+  From: email.from,
+  To: email.to,
+  Subject: email.subject,
+  HtmlBody: email.html,
+  ReplyTo: email.reply_to,
+});
+
 export const sendEmail = async (email: Emails) => {
   if (process.env.NODE_ENV !== "production") return;
-  await resend.emails.send(email);
+  const html = await render(email.react);
+  await postmark.sendEmail({
+    From: email.from,
+    To: email.to.join(","),
+    Subject: email.subject,
+    HtmlBody: html,
+    ReplyTo: email.reply_to,
+  });
 };
 
 export const sendBatchEmailHtml = async (emails: EmailHtml[]) => {
   if (process.env.NODE_ENV !== "production") return;
-  await resend.batch.send(emails);
+  await postmark.sendEmailBatch(emails.map(toPostmarkMessage));
 };
 
 // TODO: delete in favor of sendBatchEmailHtml
 export const sendEmailHtml = async (emails: EmailHtml[]) => {
   if (process.env.NODE_ENV !== "production") return;
-
-  await fetch("https://api.resend.com/emails/batch", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.RESEND_API_KEY}`,
-    },
-    body: JSON.stringify(emails),
-  });
+  await postmark.sendEmailBatch(emails.map(toPostmarkMessage));
 };
 
 export const sendWithRender = async (email: Emails) => {
   if (process.env.NODE_ENV !== "production") return;
   const html = await render(email.react);
-  await resend.emails.send({
-    ...email,
-    html,
+  await postmark.sendEmail({
+    From: email.from,
+    To: email.to.join(","),
+    Subject: email.subject,
+    HtmlBody: html,
+    ReplyTo: email.reply_to,
   });
 };
