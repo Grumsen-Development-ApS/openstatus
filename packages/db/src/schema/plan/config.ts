@@ -1,6 +1,6 @@
 import { AVAILABLE_REGIONS, FREE_FLY_REGIONS } from "@openstatus/regions";
 import type { WorkspacePlan } from "../workspaces/validation";
-import type { Addons, IntervalPrice, PlanLimits, Price } from "./schema";
+import type { Addons, IntervalPrice, Limits, PlanLimits, Price } from "./schema";
 
 type PlanConfig = {
   title: "Hobby" | "Starter" | "Pro";
@@ -240,4 +240,27 @@ export const allPlans: Record<WorkspacePlan, PlanConfig> = {
       "slack-agent": true,
     },
   },
+};
+
+// Self-host overrides applied on top of the "team" plan when SELF_HOST=true.
+// Mirrors the curl UPDATE in apps/docs/src/content/docs/guides/self-hosting-openstatus.mdx
+// so the self-hosted runtime matches what the docs promise.
+export const selfHostLimitsOverride: Partial<Limits> = {
+  monitors: 100,
+  periodicity: ["30s", "1m", "5m", "10m", "30m", "1h"],
+  "multi-region": true,
+  "data-retention": "24 months",
+  "status-pages": 20,
+  maintenance: true,
+  "status-subscribers": true,
+  "custom-domain": true,
+  "password-protection": true,
+  "white-label": true,
+  notifications: true,
+  sms: true,
+  pagerduty: true,
+  "notification-channels": 50,
+  members: "Unlimited",
+  "audit-log": true,
+  "private-locations": true,
 };

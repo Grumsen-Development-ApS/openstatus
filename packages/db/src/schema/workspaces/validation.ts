@@ -1,10 +1,12 @@
 import { createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
-import { allPlans } from "../plan/config";
+import { allPlans, selfHostLimitsOverride } from "../plan/config";
 import { limitsSchema } from "../plan/schema";
 import { workspacePlans, workspaceRole } from "./constants";
 import { workspace } from "./workspace";
+
+const isSelfHost = process.env.SELF_HOST === "true";
 
 export const workspacePlanSchema = z.enum(workspacePlans);
 export const workspaceRoleSchema = z.enum(workspaceRole);
@@ -61,10 +63,22 @@ export const selectWorkspaceSchema = createSelectSchema(workspace)
       .nullish(),
   })
   .transform((val) => {
+    // Self-hosted instances always run on the "team" plan with limits matching
+    // the self-hosting docs (see apps/docs/.../self-hosting-openstatus.mdx).
+    const plan = isSelfHost ? "team" : val.plan;
+    // 315360000s ≈ 10 years; matches the self-hosting docs curl.
+    const paidUntil = isSelfHost
+      ? new Date(Date.now() + 315_360_000 * 1000)
+      : val.paidUntil;
+    const endsAt = isSelfHost ? null : val.endsAt;
     return {
       ...val,
+      plan,
+      paidUntil,
+      endsAt,
       limits: limitsSchema.parse({
-        ...allPlans[val.plan].limits,
+        ...allPlans[plan].limits,
+        ...(isSelfHost ? selfHostLimitsOverride : {}),
         /**
          * override the default plan limits
          * allows us to set custom limits for a workspace

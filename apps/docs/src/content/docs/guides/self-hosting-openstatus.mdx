@@ -132,28 +132,13 @@ Now that the services are running, you can access the dashboard and perform the 
 -   **Dashboard:** `http://localhost:3002`
 -   **Status Pages:** `http://localhost:3003`
 
-7.  **Create a Workspace and Set Limits**
+7.  **Create a Workspace**
 
     -   Navigate to the dashboard at `http://localhost:3002`.
     -   Sign up and create a new workspace.
-    -   Because this is a self-hosted instance, you need to manually set the feature limits for your workspace directly in the database.
+    -   When `SELF_HOST=true` is set, every workspace automatically runs on the "Pro" plan with all paid features unlocked and the following limits applied: 100 monitors, 20 status pages, 50 notification channels, unlimited members, 24-month data retention, all periodicities (down to 30s), all regions, private locations, audit log, white-label, SMS, PagerDuty, and more. No manual database update is required.
 
-    The following command updates the limits for the workspace with `id = 1`. If your workspace has a different ID, change the `WHERE id = 1` part of the command.
-    ```bash
-    curl -X POST http://localhost:8080/ -H "Content-Type: application/json" \
-      -d '{"statements":["UPDATE workspace SET limits = '\''{\\"monitors\\":100,\\"periodicity\\":[\\"30s\\",\\"1m\\",\\"5m\\",\\"10m\\",\\"30m\\",\\"1h\\"],\\"multi-region\\":true,\\"data-retention\\":\\"24 months\\",\\"status-pages\\":20,\\"maintenance\\":true,\\"status-subscribers\\":true,\\"custom-domain\\":true,\\"password-protection\\":true,\\"white-label\\":true,\\"notifications\\":true,\\"sms\\":true,\\"pagerduty\\":true,\\"notification-channels\\":50,\\"members\\":\\"Unlimited\\",\\"audit-log\\":true,\\"private-locations\\":true}'\'' WHERE id = 1"]}'
-    ```
-    You can find your workspace ID by inspecting the database with a command like `curl -X POST http://localhost:8080/ -H "Content-Type: application/json" -d '{"statements":["SELECT id, name FROM workspace"]}'`.
-    
-    If you want to unlock the paid features, you need to upgrade your workspace inside the database. The following command assumes that you want to change the payment plan for the workspace with the ID of 1, and that you want to change it to a "Pro" instance indefinitely.
-    ```
-	curl -sS -X POST "http://localhost:8080/" \
-	  -H "Content-Type: application/json" \
-	  -d "{\"statements\":[
-	    \"UPDATE workspace SET plan='team', paid_until=strftime('%s','now') + 315360000, ends_at=NULL WHERE id=1;\",
-	    \"SELECT id, plan, paid_until, ends_at FROM workspace WHERE id=1;\"
-	  ]}"
-    ```   
+    If you want to tune any limit for a specific workspace, you can still override it per-workspace by updating the `limits` JSON column on the `workspace` row — those values take precedence over the self-host defaults. For most self-hosted users, the defaults are sufficient.
 
 8.  **Deploy a Private Location**
 
