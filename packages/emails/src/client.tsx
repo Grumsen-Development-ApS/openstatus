@@ -84,6 +84,9 @@ export class EmailClient {
             Subject: req.reportTitle,
             To: subscriber.email,
             HtmlBody: html,
+            ...(env.POSTMARK_BROADCAST_STREAM
+              ? { MessageStream: env.POSTMARK_BROADCAST_STREAM }
+              : {}),
           };
         }),
       );
@@ -246,6 +249,9 @@ export class EmailClient {
             Subject: `Scheduled Maintenance: ${req.maintenanceTitle}`,
             To: subscriber.email,
             HtmlBody: html,
+            ...(env.POSTMARK_BROADCAST_STREAM
+              ? { MessageStream: env.POSTMARK_BROADCAST_STREAM }
+              : {}),
           };
         }),
       );
