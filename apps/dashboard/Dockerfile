@@ -4,6 +4,7 @@
 
 # builder
 FROM node@sha256:0afb7822fac7bf9d7c1bf3b6e6c496dee6b2b64d8dfa365501a3c68e8eba94b2 AS builder
+ARG NEXT_PUBLIC_URL=http://localhost:3002
 LABEL \
     org.opencontainers.image.base.digest="sha256:0afb7822fac7bf9d7c1bf3b6e6c496dee6b2b64d8dfa365501a3c68e8eba94b2" \
     org.opencontainers.image.base.name="docker.io/node:24-slim"
@@ -20,7 +21,7 @@ ENV \
     TEAM_ID_VERCEL="test" \
     TINY_BIRD_API_KEY="test" \
     UNKEY_TOKEN="test" \
-    NEXT_PUBLIC_URL="http://localhost:3002" \
+    NEXT_PUBLIC_URL="${NEXT_PUBLIC_URL}" \
     STRIPE_SECRET_KEY="test" \
     UNKEY_API_ID="test" \
     NEXT_PUBLIC_OPENPANEL_CLIENT_ID="test" \
