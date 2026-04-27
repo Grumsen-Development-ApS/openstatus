@@ -84,8 +84,6 @@ jobs:
           - service: dashboard
             context: .
             dockerfile: apps/dashboard/Dockerfile
-            build_args: |
-              NEXT_PUBLIC_URL=${{ secrets.NEXT_PUBLIC_URL }}
           - service: workflows
             context: .
             dockerfile: apps/workflows/Dockerfile
@@ -130,7 +128,8 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build_args }}
+          build-args: |
+            NEXT_PUBLIC_URL=${{ secrets.NEXT_PUBLIC_URL }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
