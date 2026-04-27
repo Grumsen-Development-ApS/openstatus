@@ -3,19 +3,16 @@ import { z } from "zod";
 import { and, eq } from "@openstatus/db";
 import {
   invitation,
-  maintenance,
   pageSubscriber,
   selectWorkspaceSchema,
-  statusReportUpdate,
 } from "@openstatus/db/src/schema";
 import { EmailClient } from "@openstatus/emails";
-import {
-  dispatchMaintenanceUpdate,
-  dispatchStatusReportUpdate,
-  getChannel,
-} from "@openstatus/subscriptions";
+import { notifyMaintenance } from "@openstatus/services/maintenance";
+import { notifyStatusReport } from "@openstatus/services/status-report";
+import { getChannel } from "@openstatus/subscriptions";
 import { TRPCError } from "@trpc/server";
 import { env } from "../../env";
+import { toServiceCtx, toTRPCError } from "../../service-adapter";
 import {
   createTRPCRouter,
   protectedProcedure,
@@ -131,36 +128,15 @@ export const emailRouter = createTRPCRouter({
   sendStatusReport: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async (opts) => {
-      const limits = opts.ctx.workspace.limits;
-
-      if (!limits["status-subscribers"]) {
-        return;
-      }
-
-      const update = await opts.ctx.db.query.statusReportUpdate.findFirst({
-        where: eq(statusReportUpdate.id, opts.input.id),
-        with: {
-          statusReport: true,
-        },
-      });
-
-      if (!update?.statusReport) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Status report update not found",
+      try {
+        await notifyStatusReport({
+          ctx: toServiceCtx(opts.ctx),
+          input: { statusReportUpdateId: opts.input.id },
         });
+        return { success: true };
+      } catch (err) {
+        toTRPCError(err);
       }
-
-      if (update.statusReport.workspaceId !== opts.ctx.workspace.id) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Status report does not belong to your workspace",
-        });
-      }
-
-      await dispatchStatusReportUpdate(opts.input.id);
-
-      return { success: true };
     }),
 
   /**
@@ -169,29 +145,15 @@ export const emailRouter = createTRPCRouter({
   sendMaintenance: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async (opts) => {
-      const limits = opts.ctx.workspace.limits;
-
-      if (!limits["status-subscribers"]) {
-        return;
-      }
-
-      const _maintenance = await opts.ctx.db.query.maintenance.findFirst({
-        where: and(
-          eq(maintenance.id, opts.input.id),
-          eq(maintenance.workspaceId, opts.ctx.workspace.id),
-        ),
-      });
-
-      if (!_maintenance) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Maintenance not found",
+      try {
+        await notifyMaintenance({
+          ctx: toServiceCtx(opts.ctx),
+          input: { maintenanceId: opts.input.id },
         });
+        return { success: true };
+      } catch (err) {
+        toTRPCError(err);
       }
-
-      await dispatchMaintenanceUpdate(opts.input.id);
-
-      return { success: true };
     }),
 
   sendTeamInvitation: protectedProcedure

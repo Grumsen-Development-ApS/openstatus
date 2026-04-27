@@ -1,23 +1,20 @@
-import { and, db, eq, inArray } from "@openstatus/db";
 import {
-  maintenance,
-  maintenancesToPageComponents,
-  page,
-  pageComponent,
-  statusReport,
-  statusReportUpdate,
-} from "@openstatus/db/src/schema";
+  createMaintenance,
+  notifyMaintenance,
+} from "@openstatus/services/maintenance";
+import {
+  addStatusReportUpdate,
+  createStatusReport,
+  notifyStatusReport,
+  resolveStatusReport,
+  updateStatusReport,
+} from "@openstatus/services/status-report";
 import { WebClient } from "@slack/web-api";
 import type { Context } from "hono";
-import { sendMaintenanceNotification } from "../rpc/services/maintenance";
-import {
-  getStatusReportById,
-  sendStatusReportNotification,
-  updatePageComponentAssociations,
-  validatePageComponentIds,
-} from "../rpc/services/status-report";
 import { consume, get } from "./confirmation-store";
 import type { PendingAction } from "./confirmation-store";
+import { getPageUrl, getReportUrl } from "./page-urls";
+import { toServiceCtx, toSlackMessage } from "./service-adapter";
 import { resolveWorkspace } from "./workspace-resolver";
 
 interface SlackInteractionPayload {
@@ -112,45 +109,21 @@ export async function handleSlackInteraction(c: Context) {
   const notify = type === "approve_notify";
 
   try {
-    await executeAction(consumed, notify, slack, channelId, messageTs);
+    await executeAction(consumed, notify, slack, channelId, messageTs, {
+      slackUserId: userId,
+      teamId,
+    });
   } catch (err) {
     console.error("[slack] action execution error:", err);
     await slack.chat.update({
       channel: channelId,
       ts: messageTs,
-      text: ":x: Something went wrong. Please try again.",
+      text: toSlackMessage(err),
       blocks: [],
     });
   }
 
   return c.json({ ok: true });
-}
-
-async function getPageUrl(pageId: number): Promise<string | null> {
-  const statusPage = await db
-    .select({ slug: page.slug, customDomain: page.customDomain })
-    .from(page)
-    .where(eq(page.id, pageId))
-    .get();
-
-  if (!statusPage) return null;
-
-  return statusPage.customDomain
-    ? `https://${statusPage.customDomain}`
-    : `https://${statusPage.slug}.openstatus.dev`;
-}
-
-async function getReportUrl(pageId: number, reportId: number): Promise<string> {
-  const statusPage = await db
-    .select({ slug: page.slug, customDomain: page.customDomain })
-    .from(page)
-    .where(eq(page.id, pageId))
-    .get();
-
-  const baseUrl = statusPage?.customDomain
-    ? `https://${statusPage.customDomain}`
-    : `https://${statusPage?.slug}.openstatus.dev`;
-  return `${baseUrl}/events/report/${reportId}`;
 }
 
 async function executeAction(
@@ -159,84 +132,54 @@ async function executeAction(
   slack: WebClient,
   channelId: string,
   messageTs: string,
+  origin: { slackUserId: string; teamId: string | undefined },
 ) {
-  const { action, workspaceId, limits } = pending;
+  const { action } = pending;
+
+  // Hoisted out of the switch: every service-backed branch below uses
+  // the same ctx, and `toServiceCtx` loads the workspace row from the
+  // db. Computing it once halves the per-action db traffic.
+  const ctx = await toServiceCtx({
+    pending,
+    slackUserId: origin.slackUserId,
+    teamId: origin.teamId,
+  });
 
   switch (action.type) {
     case "createStatusReport": {
       const { title, status, message, pageId, pageComponentIds } =
         action.params;
-
-      const result = await db.transaction(async (tx) => {
-        const validated = pageComponentIds?.length
-          ? await validatePageComponentIds(pageComponentIds, workspaceId, tx)
-          : { componentIds: [], pageId: null };
-
-        // Validate that provided pageId matches the components' page
-        if (
-          validated.pageId !== null &&
-          pageId != null &&
-          pageId !== validated.pageId
-        ) {
-          throw new Error(
-            `pageId ${pageId} does not match the page (${validated.pageId}) that the selected components belong to`,
-          );
-        }
-
-        // Prefer the validated pageId derived from components
-        const resolvedPageId = validated.pageId ?? pageId;
-
-        const report = await tx
-          .insert(statusReport)
-          .values({
-            workspaceId,
-            pageId: resolvedPageId,
-            title,
-            status,
-          })
-          .returning()
-          .get();
-
-        if (validated.componentIds.length > 0) {
-          await updatePageComponentAssociations(
-            report.id,
-            validated.componentIds,
-            tx,
-          );
-        }
-
-        const newUpdate = await tx
-          .insert(statusReportUpdate)
-          .values({
-            statusReportId: report.id,
-            status,
-            date: new Date(),
-            message,
-          })
-          .returning()
-          .get();
-
-        return { report, updateId: newUpdate.id };
-      });
-      if (!result || !result.report.pageId) {
-        throw new Error("Failed to create status report");
+      if (pageId == null) {
+        throw new Error("pageId is required to create a status report");
       }
+
+      const { statusReport: report, initialUpdate } = await createStatusReport({
+        ctx,
+        input: {
+          title,
+          status,
+          message,
+          date: new Date(),
+          pageId,
+          pageComponentIds: pageComponentIds?.map((id) => Number(id)) ?? [],
+        },
+      });
+
       if (notify) {
-        await sendStatusReportNotification({
-          statusReportUpdateId: result.updateId,
-          limits,
+        await notifyStatusReport({
+          ctx,
+          input: { statusReportUpdateId: initialUpdate.id },
         });
       }
 
-      const reportUrl = await getReportUrl(
-        result.report.pageId,
-        result.report.id,
-      );
+      const reportUrl = report.pageId
+        ? await getReportUrl(report.pageId, report.id)
+        : null;
 
       await slack.chat.update({
         channel: channelId,
         ts: messageTs,
-        text: `:white_check_mark: Status report *${title}* created${notify ? " and subscribers notified" : ""}.\n<${reportUrl}|View on status page>`,
+        text: `:white_check_mark: Status report *${title}* created${notify ? " and subscribers notified" : ""}.${reportUrl ? `\n<${reportUrl}|View on status page>` : ""}`,
         blocks: [],
       });
       break;
@@ -244,47 +187,27 @@ async function executeAction(
 
     case "addStatusReportUpdate": {
       const { statusReportId, status, message } = action.params;
-
-      const report = await getStatusReportById(statusReportId, workspaceId);
-      if (!report) {
-        throw new Error("Status report not found");
-      }
-
-      const updateId = await db.transaction(async (tx) => {
-        const newUpdate = await tx
-          .insert(statusReportUpdate)
-          .values({
-            statusReportId: report.id,
-            status,
-            date: new Date(),
-            message,
-          })
-          .returning()
-          .get();
-
-        await tx
-          .update(statusReport)
-          .set({ status, updatedAt: new Date() })
-          .where(eq(statusReport.id, report.id));
-
-        return newUpdate.id;
-      });
+      const { statusReport: report, statusReportUpdate: update } =
+        await addStatusReportUpdate({
+          ctx,
+          input: { statusReportId, status, message },
+        });
 
       if (notify && report.pageId) {
-        await sendStatusReportNotification({
-          statusReportUpdateId: updateId,
-          limits,
+        await notifyStatusReport({
+          ctx,
+          input: { statusReportUpdateId: update.id },
         });
       }
 
-      const updateReportUrl = report.pageId
+      const reportUrl = report.pageId
         ? await getReportUrl(report.pageId, report.id)
         : null;
 
       await slack.chat.update({
         channel: channelId,
         ts: messageTs,
-        text: `:white_check_mark: Update added to *${report.title}* (${status})${notify ? " and subscribers notified" : ""}.\n>${message}${updateReportUrl ? `\n<${updateReportUrl}|View on status page>` : ""}`,
+        text: `:white_check_mark: Update added to *${report.title}* (${status})${notify ? " and subscribers notified" : ""}.\n>${message}${reportUrl ? `\n<${reportUrl}|View on status page>` : ""}`,
         blocks: [],
       });
       break;
@@ -292,35 +215,15 @@ async function executeAction(
 
     case "updateStatusReport": {
       const { statusReportId, title, pageComponentIds } = action.params;
-
-      const report = await getStatusReportById(statusReportId, workspaceId);
-      if (!report) {
-        throw new Error("Status report not found");
-      }
-
-      await db.transaction(async (tx) => {
-        if (pageComponentIds) {
-          const validated = await validatePageComponentIds(
-            pageComponentIds,
-            workspaceId,
-            tx,
-          );
-          await updatePageComponentAssociations(
-            report.id,
-            validated.componentIds,
-            tx,
-          );
-        }
-
-        const updateValues: Record<string, unknown> = {
-          updatedAt: new Date(),
-        };
-        if (title) updateValues.title = title;
-
-        await tx
-          .update(statusReport)
-          .set(updateValues)
-          .where(eq(statusReport.id, report.id));
+      const report = await updateStatusReport({
+        ctx,
+        input: {
+          id: statusReportId,
+          title: title ?? undefined,
+          pageComponentIds: pageComponentIds
+            ? pageComponentIds.map((id) => Number(id))
+            : undefined,
+        },
       });
 
       await slack.chat.update({
@@ -334,47 +237,27 @@ async function executeAction(
 
     case "resolveStatusReport": {
       const { statusReportId, message } = action.params;
-
-      const report = await getStatusReportById(statusReportId, workspaceId);
-      if (!report) {
-        throw new Error("Status report not found");
-      }
-
-      const resolveUpdateId = await db.transaction(async (tx) => {
-        const newUpdate = await tx
-          .insert(statusReportUpdate)
-          .values({
-            statusReportId: report.id,
-            status: "resolved",
-            date: new Date(),
-            message,
-          })
-          .returning()
-          .get();
-
-        await tx
-          .update(statusReport)
-          .set({ status: "resolved", updatedAt: new Date() })
-          .where(eq(statusReport.id, report.id));
-
-        return newUpdate.id;
-      });
+      const { statusReport: report, statusReportUpdate: update } =
+        await resolveStatusReport({
+          ctx,
+          input: { statusReportId, message },
+        });
 
       if (notify && report.pageId) {
-        await sendStatusReportNotification({
-          statusReportUpdateId: resolveUpdateId,
-          limits,
+        await notifyStatusReport({
+          ctx,
+          input: { statusReportUpdateId: update.id },
         });
       }
 
-      const resolveReportUrl = report.pageId
+      const reportUrl = report.pageId
         ? await getReportUrl(report.pageId, report.id)
         : null;
 
       await slack.chat.update({
         channel: channelId,
         ts: messageTs,
-        text: `:white_check_mark: *${report.title}* resolved${notify ? " and subscribers notified" : ""}.${message ? `\n>${message}` : ""}${resolveReportUrl ? `\n<${resolveReportUrl}|View on status page>` : ""}`,
+        text: `:white_check_mark: *${report.title}* resolved${notify ? " and subscribers notified" : ""}.${message ? `\n>${message}` : ""}${reportUrl ? `\n<${reportUrl}|View on status page>` : ""}`,
         blocks: [],
       });
       break;
@@ -390,94 +273,23 @@ async function executeAction(
         pageComponentIds: maintenanceComponentIds,
       } = action.params;
 
-      const fromDate = new Date(from);
-      const toDate = new Date(to);
-      if (fromDate >= toDate) {
-        throw new Error("Start time must be before end time");
-      }
-
-      const newMaintenance = await db.transaction(async (tx) => {
-        const pageRecord = await tx
-          .select({ id: page.id })
-          .from(page)
-          .where(
-            and(
-              eq(page.id, maintenancePageId),
-              eq(page.workspaceId, workspaceId),
-            ),
-          )
-          .get();
-
-        if (!pageRecord) {
-          throw new Error("Page not found in this workspace");
-        }
-
-        const resolvedPageId = pageRecord.id;
-
-        let componentIds: number[] = [];
-        if (maintenanceComponentIds?.length) {
-          const numericIds = maintenanceComponentIds.map((id) => Number(id));
-          const validComponents = await tx
-            .select({ id: pageComponent.id, pageId: pageComponent.pageId })
-            .from(pageComponent)
-            .where(
-              and(
-                inArray(pageComponent.id, numericIds),
-                eq(pageComponent.workspaceId, workspaceId),
-              ),
-            )
-            .all();
-
-          if (validComponents.length !== numericIds.length) {
-            throw new Error("One or more page components not found");
-          }
-
-          const componentPageIds = new Set(
-            validComponents.map((c) => c.pageId),
-          );
-          if (componentPageIds.size > 1) {
-            throw new Error("All components must belong to the same page");
-          }
-
-          const componentPageId = validComponents[0]?.pageId;
-          if (componentPageId !== null && componentPageId !== resolvedPageId) {
-            throw new Error(
-              "Selected components do not belong to the target status page",
-            );
-          }
-
-          componentIds = numericIds;
-        }
-
-        const record = await tx
-          .insert(maintenance)
-          .values({
-            workspaceId,
-            pageId: resolvedPageId,
-            title,
-            message,
-            from: fromDate,
-            to: toDate,
-          })
-          .returning()
-          .get();
-
-        if (componentIds.length > 0) {
-          await tx.insert(maintenancesToPageComponents).values(
-            componentIds.map((pageComponentId) => ({
-              maintenanceId: record.id,
-              pageComponentId,
-            })),
-          );
-        }
-
-        return record;
+      const newMaintenance = await createMaintenance({
+        ctx,
+        input: {
+          title,
+          message,
+          from: new Date(from),
+          to: new Date(to),
+          pageId: maintenancePageId,
+          pageComponentIds:
+            maintenanceComponentIds?.map((id) => Number(id)) ?? [],
+        },
       });
 
       if (notify) {
-        await sendMaintenanceNotification({
-          maintenanceId: newMaintenance.id,
-          limits,
+        await notifyMaintenance({
+          ctx,
+          input: { maintenanceId: newMaintenance.id },
         });
       }
 
