@@ -8,7 +8,7 @@ import { user } from "@openstatus/db/src/schema";
 import { WelcomeEmail, sendEmail } from "@openstatus/emails";
 import { headers } from "next/headers";
 import { adapter } from "./adapter";
-import { GitHubProvider, GoogleProvider, ResendProvider } from "./providers";
+import { GitHubProvider, GoogleProvider, PostmarkProvider } from "./providers";
 
 export type { DefaultSession };
 
@@ -17,7 +17,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter,
   providers:
     process.env.NODE_ENV === "development" || process.env.SELF_HOST === "true"
-      ? [GitHubProvider, GoogleProvider, ResendProvider]
+      ? [GitHubProvider, GoogleProvider, PostmarkProvider]
       : [GitHubProvider, GoogleProvider],
   callbacks: {
     async signIn(params) {
@@ -57,8 +57,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           .run();
       }
 
-      // REMINDER: only used in dev mode
-      if (params.account?.provider === "resend") {
+      if (params.account?.provider === "postmark") {
         if (Number.isNaN(Number(params.user.id))) return true;
         await db
           .update(user)

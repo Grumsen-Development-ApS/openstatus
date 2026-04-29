@@ -1,6 +1,6 @@
 import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
-import Resend from "next-auth/providers/resend";
+import Postmark from "next-auth/providers/postmark";
 
 export const GitHubProvider = GitHub({
   allowDangerousEmailAccountLinking: true,
@@ -18,11 +18,8 @@ export const GoogleProvider = Google({
   },
 });
 
-export const ResendProvider = Resend({
-  apiKey: undefined, // REMINDER: keep undefined to avoid sending emails
-  async sendVerificationRequest(params) {
-    console.log("");
-    console.log(`>>> Magic Link: ${params.url}`);
-    console.log("");
-  },
+export const PostmarkProvider = Postmark({
+  apiKey: process.env.RESEND_API_KEY,
+  from:
+    process.env.EMAIL_FROM ?? "notifications@notifications.openstatus.dev",
 });

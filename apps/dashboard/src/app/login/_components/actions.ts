@@ -2,9 +2,9 @@
 
 import { signIn } from "@/lib/auth";
 
-export async function signInWithResendAction(formData: FormData) {
+export async function signInWithPostmarkAction(formData: FormData) {
   try {
-    await signIn("resend", formData);
+    await signIn("postmark", formData);
   } catch (e) {
     console.error(e);
   }

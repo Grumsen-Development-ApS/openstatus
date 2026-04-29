@@ -5,12 +5,9 @@ import { useFormStatus } from "react-dom";
 import { Input } from "@openstatus/ui/components/ui/input";
 import { Label } from "@openstatus/ui/components/ui/label";
 import { toast } from "sonner";
-import { signInWithResendAction } from "./actions";
+import { signInWithPostmarkAction } from "./actions";
 import { LoginButton } from "./login-button";
 
-/**
- * @deprecated - only to be used in development mode
- */
 export default function MagicLinkForm() {
   const { pending } = useFormStatus();
 
@@ -18,8 +15,8 @@ export default function MagicLinkForm() {
     <form
       action={async (formData) => {
         try {
-          await signInWithResendAction(formData);
-          toast.success("Check your terminal for the magic link.");
+          await signInWithPostmarkAction(formData);
+          toast.success("Check your inbox for the magic link.");
         } catch (e) {
           console.error(e);
           toast.error("Error sending magic link.");
@@ -32,7 +29,7 @@ export default function MagicLinkForm() {
         <Input id="email" name="email" type="email" required />
       </div>
       <LoginButton provider="email">
-        {pending ? "Logging..." : "Log Magic Link"}
+        {pending ? "Sending..." : "Send Magic Link"}
       </LoginButton>
     </form>
   );
