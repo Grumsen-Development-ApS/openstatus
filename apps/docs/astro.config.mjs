@@ -52,9 +52,11 @@ export default defineConfig({
         Head: "./src/components/Head.astro",
         Hero: "./src/components/Hero.astro",
         Footer: "./src/components/Footer.astro",
+        Header: "./src/components/Header.astro",
       },
       editLink: {
-        baseUrl: "https://github.com/openstatusHQ/openstatus/app/docs",
+        baseUrl:
+          "https://github.com/openstatusHQ/openstatus/edit/main/apps/docs",
       },
       customCss: [
         // Path to your Tailwind base styles:
@@ -108,7 +110,7 @@ export default defineConfig({
               slug: "tutorial/how-to-create-private-location",
             },
             {
-              label: "Get Started with OpenStatus CLI",
+              label: "Get Started with openstatus CLI",
               slug: "tutorial/get-started-with-openstatus-cli",
             },
             {
@@ -185,10 +187,6 @@ export default defineConfig({
           label: "Reference",
           items: [
             {
-              label: "CLI Reference",
-              slug: "reference/cli-reference",
-            },
-            {
               label: "API Reference V1 - Deprecated",
               link: "https://api.openstatus.dev/v1",
               // badge: { text: 'External' },
@@ -203,6 +201,14 @@ export default defineConfig({
               attrs: {
                 target: "_blank",
               },
+            },
+            {
+              label: "CLI Reference",
+              slug: "reference/cli-reference",
+            },
+            {
+              label: "MCP Server",
+              slug: "reference/mcp-server",
             },
             {
               label: "DNS Monitor",
