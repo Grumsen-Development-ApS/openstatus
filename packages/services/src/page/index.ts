@@ -3,7 +3,6 @@ export { deletePage } from "./delete";
 export {
   getPage,
   getPageBySlug,
-  getPageCustomDomain,
   getSlugAvailable,
   listPages,
   type PageListItem,

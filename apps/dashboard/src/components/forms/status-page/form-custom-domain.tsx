@@ -24,7 +24,6 @@ import { z } from "zod";
 
 import { Link } from "@/components/common/link";
 import DomainConfiguration from "@/components/domains/domain-configuration";
-import { useDomainStatus } from "@/components/domains/use-domain-status";
 import {
   Form,
   FormField,
@@ -33,7 +32,7 @@ import {
 } from "@openstatus/ui/components/ui/form";
 import { isTRPCClientError } from "@trpc/client";
 import type React from "react";
-import { useEffect, useTransition } from "react";
+import { useTransition } from "react";
 import { toast } from "sonner";
 
 const schema = z.object({
@@ -59,7 +58,6 @@ export function FormCustomDomain({
     },
   });
   const [isPending, startTransition] = useTransition();
-  const { refresh, isLoading } = useDomainStatus(defaultValues?.domain);
 
   function submitAction(values: FormValues) {
     if (isPending) return;
@@ -83,12 +81,6 @@ export function FormCustomDomain({
       }
     });
   }
-
-  // NOTE: poll every 30 seconds to check for the status
-  useEffect(() => {
-    const interval = setInterval(() => refresh(), 30_000);
-    return () => clearInterval(interval);
-  }, [refresh]);
 
   return (
     <Form {...form}>
@@ -147,20 +139,9 @@ export function FormCustomDomain({
                 </Link>
               </Button>
             ) : (
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  disabled={isPending || isLoading}
-                  onClick={refresh}
-                  className="hidden sm:block"
-                >
-                  {isLoading ? "Refreshing..." : "Refresh Configuration"}
-                </Button>
-                <Button type="submit" disabled={isPending}>
-                  {isPending ? "Submitting..." : "Submit"}
-                </Button>
-              </div>
+              <Button type="submit" disabled={isPending}>
+                {isPending ? "Submitting..." : "Submit"}
+              </Button>
             )}
           </FormCardFooter>
         </FormCard>
