@@ -4,7 +4,7 @@ go 1.25.2
 
 require (
 	connectrpc.com/connect v1.19.1
-	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-chi/render v1.0.3
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
